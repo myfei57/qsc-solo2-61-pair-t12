@@ -55,7 +55,7 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(
             {check["name"] for check in checks["checks"]},
-            {"store", "access", "drain", "ventilation", "fire", "patrol", "quota", "cables", "environment", "audit"},
+            {"store", "access", "drain", "ventilation", "fire", "public_address", "patrol", "quota", "cables", "environment", "audit"},
         )
 
         status, snapshot = self.call("GET", "/api/snapshot")
@@ -73,6 +73,7 @@ class ConsoleCase(unittest.TestCase):
                 "drain",
                 "ventilation",
                 "fire",
+                "public_address",
                 "patrol",
                 "quota",
                 "cables",
@@ -409,6 +410,73 @@ class ConsoleCase(unittest.TestCase):
 
         status, body = self.call("POST", "/api/suppression/clear")
         self.assertEqual(body["count"], 0)
+
+    def test_pa_routes(self) -> None:
+        status, policy = self.call("GET", "/api/pa/policy")
+        self.assertEqual(status, 200)
+        self.assertEqual(policy["preemption"], "immediate_cut")
+        self.assertEqual(policy["fallback_scope"], "per_zone")
+
+        status, zones = self.call("GET", "/api/pa/zones")
+        self.assertEqual(status, 200)
+        self.assertEqual(zones["count"], 3)
+
+        status, body = self.call(
+            "POST",
+            "/api/pa/trigger",
+            {"id": "b1", "content": "evacuate", "zones": ["zone-1"], "priority": 10},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "playing")
+        self.assertEqual(body["preemption"], "immediate_cut")
+
+        status, repeat = self.call(
+            "POST",
+            "/api/pa/trigger",
+            {"id": "b1", "content": "evacuate", "zones": ["zone-1"], "priority": 10},
+        )
+        self.assertTrue(repeat["idempotent"])
+        status, conflict = self.call(
+            "POST",
+            "/api/pa/trigger",
+            {"id": "b1", "content": "different", "zones": ["zone-1"], "priority": 10},
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("already exists", conflict["error"])
+
+        status, state = self.call("GET", "/api/pa/state")
+        zone = next(item for item in state["zones"] if item["zone"] == "zone-1")
+        self.assertEqual(zone["current"]["id"], "b1")
+        self.assertEqual(zone["revision"], state["revision"])
+        self.assertEqual(state["zone_table"][0]["id"], "zone-1")
+        self.assertEqual(state["audit"][-1]["revision"], state["revision"])
+
+        status, queue = self.call("GET", "/api/pa/queue")
+        self.assertEqual(status, 200)
+        self.assertEqual(queue["zones"][0]["zone"], "zone-1")
+
+        status, body = self.call("POST", "/api/pa/complete", {"id": "b1", "zone": "zone-1"})
+        self.assertEqual(body["status"], "stopped")
+        status, audit = self.call("GET", "/api/pa/audit")
+        self.assertGreaterEqual(audit["count"], 3)
+
+    def test_pa_failure_uses_per_zone_local_fallback(self) -> None:
+        self.call(
+            "POST",
+            "/api/pa/trigger",
+            {"id": "info", "content": "notice", "zones": ["zone-1", "zone-2"], "priority": 90},
+        )
+        self.call("POST", "/api/pa/heartbeat", {"zone": "zone-2", "online": False})
+        status, body = self.call(
+            "POST",
+            "/api/pa/trigger",
+            {"id": "fire", "content": "leave now", "zones": ["zone-1", "zone-2"], "priority": 10},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["fallback_scope"], "per_zone")
+        self.assertEqual(body["zones"], {"zone-1": "playing", "zone-2": "fallback"})
+        status, status_body = self.call("GET", "/api/pa/status", query={"id": ["fire"]})
+        self.assertEqual(status_body["status"], "partial_fallback")
 
     def test_patrol_routes(self) -> None:
         status, patrols = self.call("GET", "/api/patrols")

@@ -26,6 +26,7 @@ def collect(rt: "Runtime") -> dict[str, str]:
         "drain": rt.drain.describe(),
         "ventilation": rt.ventilation.describe(),
         "fire": rt.fire.describe(),
+        "public_address": rt.pa.describe(),
         "patrol": rt.patrol.describe(),
         "quota": rt.quota.describe(),
         "cables": rt.cables.describe(),

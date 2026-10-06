@@ -18,6 +18,7 @@ class OpsCounters:
     access_pending: int
     drain_pits: int
     fire_alarms: int
+    pa_fallback: int
     patrol_missed: int
     audit_records: int
 
@@ -28,6 +29,7 @@ class OpsCounters:
             "access_pending": self.access_pending,
             "drain_pits": self.drain_pits,
             "fire_alarms": self.fire_alarms,
+            "pa_fallback": self.pa_fallback,
             "patrol_missed": self.patrol_missed,
             "audit_records": self.audit_records,
         }
@@ -40,6 +42,7 @@ def collect(rt: "Runtime") -> OpsCounters:
         access_pending=rt.access.summary()["pending"],
         drain_pits=rt.drain.pit_count(),
         fire_alarms=rt.fire.alarm_count(),
+        pa_fallback=len(rt.pa.fallback_zones()),
         patrol_missed=len(rt.patrol.missed()),
         audit_records=rt.audit.count(),
     )

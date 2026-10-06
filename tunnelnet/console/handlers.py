@@ -11,6 +11,14 @@ from tunnelnet.drain import Pit
 from tunnelnet.env import snapshot as env_snapshot
 from tunnelnet.fire import Detector
 from tunnelnet.ns import Stage, control_chain
+from tunnelnet.pa import (
+    BROADCAST_GROUP_FALLBACK,
+    FIRE_PRIORITY,
+    IMMEDIATE_CUT,
+    PER_ZONE_FALLBACK,
+    SENTENCE_BOUNDARY_CUT,
+    BroadcastConflict,
+)
 from tunnelnet.reporting import audit_export, telemetry_export, to_csv
 from tunnelnet.reporting import store_export as store_csv_export
 from tunnelnet.store import export_all, export_kind, list_approvals, revoke_approval, summarize
@@ -508,6 +516,114 @@ def fire_alarm(server: "Server", request: Request) -> Response:
 
 def fire_clear(server: "Server", request: Request) -> Response:
     return json_response({"count": server.runtime.fire.clear_alarms()})
+
+
+def pa_policy(server: "Server", request: Request) -> Response:
+    return json_response(
+        {
+            "preemption": IMMEDIATE_CUT,
+            "preemption_options": [IMMEDIATE_CUT, SENTENCE_BOUNDARY_CUT],
+            "fallback_scope": PER_ZONE_FALLBACK,
+            "fallback_options": [PER_ZONE_FALLBACK, BROADCAST_GROUP_FALLBACK],
+        }
+    )
+
+
+def pa_zones_list(server: "Server", request: Request) -> Response:
+    return json_response(server.runtime.pa_table.as_dict())
+
+
+def pa_state(server: "Server", request: Request) -> Response:
+    return json_response(server.runtime.pa.state().as_dict())
+
+
+def pa_zone_status(server: "Server", request: Request) -> Response:
+    zone_id = request.query_field("zone")
+    if not zone_id:
+        raise RequestError(400, "zone is required")
+    return json_response(server.runtime.pa.zone(zone_id).as_dict())
+
+
+def pa_queue(server: "Server", request: Request) -> Response:
+    state = server.runtime.pa.state()
+    return json_response(
+        {
+            "zones": [
+                {
+                    "zone": zone.zone,
+                    "queued": [item.as_dict() for item in zone.queued],
+                    "current": None if zone.current is None else zone.current.as_dict(),
+                }
+                for zone in state.zones
+            ]
+        }
+    )
+
+
+def pa_audit(server: "Server", request: Request) -> Response:
+    entries = server.runtime.pa.audit_trail()
+    return json_response({"items": [entry.as_dict() for entry in entries], "count": len(entries)})
+
+
+def pa_status(server: "Server", request: Request) -> Response:
+    broadcast_id = request.query_field("id")
+    if not broadcast_id:
+        raise RequestError(400, "id is required")
+    return json_response(server.runtime.pa.broadcast_status(broadcast_id))
+
+
+def pa_trigger(server: "Server", request: Request) -> Response:
+    raw_zones = request.payload.get("zones", [])
+    if not isinstance(raw_zones, list) or not all(isinstance(item, str) for item in raw_zones):
+        raise RequestError(400, "zones must be a list of strings")
+    try:
+        result = server.runtime.pa.trigger(
+            broadcast_id=request.str_field("id"),
+            content=request.str_field("content"),
+            zones=raw_zones,
+            priority=request.int_field("priority", FIRE_PRIORITY),
+            source=request.str_field("source", "operator"),
+            content_hash=request.str_field("content_hash"),
+        )
+    except BroadcastConflict as exc:
+        raise RequestError(409, str(exc)) from exc
+    record_event(server.runtime, "pa_trigger", request.str_field("id"))
+    return json_response(result)
+
+
+def pa_stop(server: "Server", request: Request) -> Response:
+    broadcast_id = request.str_field("id")
+    raw_zones = request.payload.get("zones")
+    zones = None
+    if raw_zones is not None:
+        if not isinstance(raw_zones, list) or not all(isinstance(item, str) for item in raw_zones):
+            raise RequestError(400, "zones must be a list of strings")
+        zones = raw_zones
+    result = server.runtime.pa.stop(broadcast_id, zones)
+    record_event(server.runtime, "pa_stop", broadcast_id)
+    return json_response(result)
+
+
+def pa_complete(server: "Server", request: Request) -> Response:
+    result = server.runtime.pa.complete(request.str_field("id"), request.str_field("zone"))
+    record_event(server.runtime, "pa_complete", request.str_field("id"))
+    return json_response(result)
+
+
+def pa_heartbeat(server: "Server", request: Request) -> Response:
+    online = bool(request.payload.get("online", True))
+    result = server.runtime.pa.heartbeat(request.str_field("zone"), online)
+    record_event(server.runtime, "pa_heartbeat", request.str_field("zone"))
+    return json_response(result)
+
+
+def pa_fallback_reset(server: "Server", request: Request) -> Response:
+    try:
+        result = server.runtime.pa.reset_fallback(request.str_field("zone"))
+    except RuntimeError as exc:
+        raise RequestError(409, str(exc)) from exc
+    record_event(server.runtime, "pa_fallback_reset", request.str_field("zone"))
+    return json_response(result)
 
 
 def patrols(server: "Server", request: Request) -> Response:

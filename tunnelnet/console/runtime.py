@@ -6,10 +6,17 @@ from tunnelnet.access import AccessService
 from tunnelnet.audit import AuditRegistry, MarkSet
 from tunnelnet.cabin import PartitionTable, PowerBook, Registry as CabinRegistry, SuppressionLog
 from tunnelnet.cable import CableRegistry, MovingAverage
-from tunnelnet.drain import DrainService, PumpUnit
+from tunnelnet.drain import DrainService, PumpUnit, utc_now
 from tunnelnet.env import Environment
 from tunnelnet.fire import FireService
 from tunnelnet.ns import Registry as NamespaceRegistry
+from tunnelnet.pa import (
+    BroadcastService,
+    LocalIndicatorBank,
+    LocalPlaybackController,
+    Zone,
+    ZoneTable,
+)
 from tunnelnet.patrol import PatrolService
 from tunnelnet.quota import QuotaService
 from tunnelnet.store import Store
@@ -37,6 +44,17 @@ class Runtime:
         self.suppression = SuppressionLog()
         self.dedupe = MarkSet()
         self.fire = FireService(store, self.ventilation, self.suppression, self.dedupe, DEFAULT_ZONES)
+        self.pa_table = ZoneTable()
+        for index, zone_id in enumerate(DEFAULT_ZONES, start=1):
+            self.pa_table.add(Zone(zone_id, f"zone {index}", f"pa-ctrl-{index}"))
+        self.pa_controller = LocalPlaybackController()
+        self.pa_indicators = LocalIndicatorBank()
+        self.pa = BroadcastService(
+            self.pa_table,
+            self.pa_controller,
+            self.pa_indicators,
+            clock=utc_now,
+        )
         self.patrol = PatrolService(self.cabins)
         self.power_book = PowerBook()
         self.quota = QuotaService(self.cabins, self.power_book)

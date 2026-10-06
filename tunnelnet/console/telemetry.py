@@ -25,6 +25,9 @@ class Telemetry:
     cycles: int
     fire_detectors: int
     fire_alarms: int
+    pa_broadcasts: int
+    pa_fallback: int
+    pa_revision: int
     suppressed_zones: int
     patrol_route: int
     patrol_checked: int
@@ -50,6 +53,9 @@ class Telemetry:
             "cycles": self.cycles,
             "fire_detectors": self.fire_detectors,
             "fire_alarms": self.fire_alarms,
+            "pa_broadcasts": self.pa_broadcasts,
+            "pa_fallback": self.pa_fallback,
+            "pa_revision": self.pa_revision,
             "suppressed_zones": self.suppressed_zones,
             "patrol_route": self.patrol_route,
             "patrol_checked": self.patrol_checked,
@@ -79,6 +85,9 @@ def collect(rt: "Runtime") -> Telemetry:
         cycles=rt.drain.cycle_count(),
         fire_detectors=rt.fire.detector_count(),
         fire_alarms=rt.fire.alarm_count(),
+        pa_broadcasts=len(rt.pa.state().broadcasts),
+        pa_fallback=len(rt.pa.fallback_zones()),
+        pa_revision=rt.pa.state().revision,
         suppressed_zones=len(rt.suppression.distinct_zones()),
         patrol_route=rt.patrol.route_len(),
         patrol_checked=rt.patrol.checked_count(),

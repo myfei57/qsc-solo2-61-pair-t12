@@ -25,6 +25,7 @@ def collect(rt: "Runtime") -> dict[str, object]:
         "drain": rt.drain.state().as_dict(),
         "ventilation": rt.ventilation.state().as_dict(),
         "fire": rt.fire.report().as_dict(),
+        "public_address": rt.pa.state().as_dict(),
         "patrol": rt.patrol.state().as_dict(),
         "quota": rt.quota.report().as_dict(),
         "cables": rt.cables.summary().as_dict(),

@@ -34,6 +34,7 @@ def text_report(rt: "Runtime") -> str:
         f"drain: {describe['drain']}",
         f"ventilation: {describe['ventilation']}",
         f"fire: {describe['fire']}",
+        f"public_address: {describe['public_address']}",
         f"patrol: {describe['patrol']}",
         f"quota: {describe['quota']}",
         f"cables: {describe['cables']}",
@@ -78,6 +79,12 @@ def dashboard(rt: "Runtime") -> dict[str, object]:
             "detectors": fire_report.detector_count,
             "alarms": fire_report.alarm_count,
             "zones": fire_report.zone_count,
+        },
+        "public_address": {
+            "zones": len(rt.pa.state().zones),
+            "broadcasts": len(rt.pa.state().broadcasts),
+            "fallback": len(rt.pa.fallback_zones()),
+            "revision": rt.pa.state().revision,
         },
         "patrol": {
             "route": rt.patrol.route_len(),

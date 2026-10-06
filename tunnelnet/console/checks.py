@@ -48,6 +48,15 @@ def run_checks(rt: "Runtime") -> list[dict[str, str]]:
         {"name": "fire", "status": "warn" if alarms else "ok", "detail": f"alarms={alarms}"}
     )
 
+    fallback = len(rt.pa.fallback_zones())
+    checks.append(
+        {
+            "name": "public_address",
+            "status": "warn" if fallback else "ok",
+            "detail": f"fallback zones={fallback} revision={rt.pa.state().revision}",
+        }
+    )
+
     missed = len(rt.patrol.missed())
     checks.append(
         {"name": "patrol", "status": "warn" if missed else "ok", "detail": f"missed={missed}"}
