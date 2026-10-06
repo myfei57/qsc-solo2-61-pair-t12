@@ -46,10 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     store = Store.open(args.store)
     host, port = parse_address(args.addr)
     application = Server(store, args.web_dir)
+    application.runtime.heartbeat.start()
     try:
         with make_server(host, port, application, server_class=ThreadingWSGIServer) as httpd:
             LOGGER.info("control console listening on %s:%d", host, port)
             httpd.serve_forever()
     except KeyboardInterrupt:
         LOGGER.info("control console stopped")
+    finally:
+        application.runtime.close()
     return 0

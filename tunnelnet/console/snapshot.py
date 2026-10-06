@@ -29,5 +29,6 @@ def collect(rt: "Runtime") -> dict[str, object]:
         "quota": rt.quota.report().as_dict(),
         "cables": rt.cables.summary().as_dict(),
         "suppression": {"zones": rt.suppression.distinct_zones()},
+        "broadcast": rt.broadcast.snapshot(),
         "audit": rt.audit.state().as_dict(),
     }

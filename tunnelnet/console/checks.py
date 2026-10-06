@@ -77,4 +77,17 @@ def run_checks(rt: "Runtime") -> list[dict[str, str]]:
     )
 
     checks.append({"name": "audit", "status": "ok", "detail": f"records={rt.audit.count()}"})
+
+    broadcast_counts = rt.broadcast.snapshot()["counts"]
+    broadcast_status = "warn" if broadcast_counts["indicator"] else "ok"
+    checks.append(
+        {
+            "name": "broadcast",
+            "status": broadcast_status,
+            "detail": (
+                f"zones={broadcast_counts['zones']} online={broadcast_counts['online']} "
+                f"playing={broadcast_counts['playing']} indicator={broadcast_counts['indicator']}"
+            ),
+        }
+    )
     return checks

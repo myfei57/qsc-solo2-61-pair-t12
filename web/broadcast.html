@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>应急广播</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 2rem; color: #1b1f24; }
+nav a { margin-right: 1rem; color: #0b5fff; text-decoration: none; }
+table { border-collapse: collapse; margin-bottom: 1.5rem; }
+th, td { border: 1px solid #d0d7de; padding: 0.4rem 0.7rem; text-align: left; font-size: 0.95rem; }
+.state-playing { color: #0a7d2c; font-weight: 600; }
+.state-indicator, .state-offline { color: #c22d2d; font-weight: 700; }
+.state-idle { color: #57606a; }
+.meta { color: #57606a; font-size: 0.9rem; }
+code { background: #f6f8fa; padding: 0 0.25rem; }
+</style>
+</head>
+<body>
+<nav><a href="/cabins">舱室</a><a href="/env">环境</a><a href="/patrols">巡检</a><a href="/alarms">报警</a><a href="/broadcast">应急广播</a></nav>
+<h1>应急广播分区播控</h1>
+<p id="decision" class="meta"></p>
+<h2>分区状态（与现场为同一份播放状态）</h2>
+<table>
+  <thead><tr><th>分区</th><th>名称</th><th>状态</th><th>在播</th><th>优先级</th><th>队列</th><th>就地指示</th><th>故障</th></tr></thead>
+  <tbody id="zones"></tbody>
+</table>
+<h2>播控命令台账</h2>
+<table>
+  <thead><tr><th>广播</th><th>优先级</th><th>状态</th><th>分区</th><th>已播</th><th>排队</th><th>就地指示</th><th>回滚</th></tr></thead>
+  <tbody id="commands"></tbody>
+</table>
+<script>
+async function load() {
+  const data = await (await fetch("/api/broadcast")).json();
+  document.getElementById("decision").textContent =
+    `打断策略=${data.decision.preempt_mode}（火警立即切掉当前内容） · 退回范围=${data.decision.fallback_scope}（只退失败的分区） · 事件序号=${data.last_seq}`;
+  document.getElementById("zones").innerHTML = data.zones.map((z) => `
+    <tr>
+      <td>${z.zone_id}</td><td>${z.name}</td>
+      <td class="state-${z.state}">${z.state}${z.online ? "" : "（离线）"}</td>
+      <td>${z.current ? `${z.current.title} (${z.current.priority_label})` : "—"}</td>
+      <td>${z.current ? z.current.priority : ""}</td>
+      <td>${z.queue.map((q) => `${q.key}#${q.priority_label}`).join("，") || "—"}</td>
+      <td>${z.indicator_on ? "🔔 已启动" : ""}</td>
+      <td>${z.last_error || ""}</td>
+    </tr>`).join("");
+  document.getElementById("commands").innerHTML = data.commands.map((c) => `
+    <tr>
+      <td>${c.title}</td><td>${c.priority}</td><td>${c.status}</td>
+      <td>${c.zones.join("，")}</td>
+      <td>${c.started.join("，")}</td><td>${c.queued.join("，")}</td>
+      <td>${c.indicator.join("，")}</td>
+      <td>${Object.entries(c.restored).map(([z, k]) => `${z}→${k || "空闲"}`).join("，")}</td>
+    </tr>`).join("");
+}
+load();
+setInterval(load, 1000);
+</script>
+</body>
+</html>

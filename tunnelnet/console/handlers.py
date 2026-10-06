@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tunnelnet.audit import between, events, filter_records, last, most_recent
+from tunnelnet.broadcast import make_broadcast
 from tunnelnet.cabin import Cabin, status_summary
 from tunnelnet.cable import danger_count, healthy_count, load_factor
 from tunnelnet.drain import Pit
@@ -730,6 +731,132 @@ def suppression_list(server: "Server", request: Request) -> Response:
             "describe": log.describe(),
         }
     )
+
+
+# --- emergency broadcast ----------------------------------------------------
+
+
+def broadcast_snapshot(server: "Server", request: Request) -> Response:
+    # The console reads the exact same projection the field actions folded.
+    return json_response(server.runtime.broadcast.snapshot())
+
+
+def broadcast_zones(server: "Server", request: Request) -> Response:
+    broadcast = server.runtime.broadcast
+    zone_id = request.query_field("zone")
+    if zone_id:
+        view = broadcast.state_view().zone_view(zone_id)
+        if view is None:
+            raise RequestError(404, f"zone {zone_id} not found")
+        return json_response(view.as_dict())
+    return json_response({"zones": [zone.as_dict() for zone in broadcast.zones()]})
+
+
+def broadcast_queue(server: "Server", request: Request) -> Response:
+    views = server.runtime.broadcast.snapshot()["zones"]
+    return json_response(
+        {
+            "zones": [
+                {"zone_id": zone["zone_id"], "queue": zone["queue"], "current": zone["current"]}
+                for zone in views
+            ]
+        }
+    )
+
+
+def broadcast_commands(server: "Server", request: Request) -> Response:
+    state = server.runtime.broadcast.state_view()
+    command_id = request.query_field("id")
+    key = request.query_field("key")
+    if command_id:
+        command = state.command(command_id)
+        if command is None:
+            raise RequestError(404, f"command {command_id} not found")
+        return json_response(command.as_dict())
+    if key:
+        command = state.command_by_key(key)
+        if command is None:
+            raise RequestError(404, f"command for key {key} not found")
+        return json_response(command.as_dict())
+    return json_response({"commands": [command.as_dict() for command in state.snapshot()["commands"]]})
+
+
+def broadcast_trigger(server: "Server", request: Request) -> Response:
+    key = request.str_field("key")
+    if not key:
+        raise RequestError(400, "key is required")
+    raw_zones = request.payload.get("zones", [])
+    if not isinstance(raw_zones, list) or not raw_zones:
+        raise RequestError(400, "zones must be a non-empty list")
+    try:
+        priority = request.payload.get("priority", "notice")
+        broadcast = make_broadcast(
+            key,
+            title=request.str_field("title", key),
+            priority=priority,
+            duration=request.float_field("duration", 30.0),
+            loop=bool(request.payload.get("loop", False)),
+            source=request.str_field("source", "console"),
+        )
+        result = server.runtime.broadcast.trigger(
+            broadcast,
+            [str(zone) for zone in raw_zones],
+            idempotency_key=request.str_field("idempotency_key", key),
+        )
+    except KeyError as exc:
+        raise RequestError(404, str(exc)) from exc
+    except ValueError as exc:
+        raise RequestError(400, str(exc)) from exc
+    record_event(server.runtime, "broadcast_trigger", key)
+    return json_response(result.as_dict())
+
+
+def broadcast_stop(server: "Server", request: Request) -> Response:
+    key = request.str_field("key")
+    zone = request.str_field("zone")
+    outcome = server.runtime.broadcast.stop(key=key, zone=zone)
+    record_event(server.runtime, "broadcast_stop", key)
+    return json_response(outcome)
+
+
+def broadcast_audit(server: "Server", request: Request) -> Response:
+    broadcast = server.runtime.broadcast
+    after = request.query_field("after")
+    if after.isdigit():
+        return json_response(
+            {"events": broadcast.events_after(int(after)), "last_seq": broadcast.store.last_seq()}
+        )
+    return json_response(
+        {
+            "events": broadcast.audit(
+                event=request.query_field("event"),
+                zone=request.query_field("zone"),
+                command_id=request.query_field("command_id"),
+                key=request.query_field("key"),
+            ),
+            "last_seq": broadcast.store.last_seq(),
+        }
+    )
+
+
+def broadcast_heartbeat(server: "Server", request: Request) -> Response:
+    broadcast = server.runtime.broadcast
+    zone = request.str_field("zone")
+    targets = [zone] if zone else [item.id for item in broadcast.zones()]
+    outcomes = {target: broadcast.heartbeat(target) for target in targets}
+    return json_response({"online": outcomes})
+
+
+def broadcast_fault(server: "Server", request: Request) -> Response:
+    # Drill/ops aid: force the simulated amplifier of one zone to fail next.
+    zone = request.str_field("zone")
+    action = request.str_field("action", "fail-next")
+    amplifier = server.runtime.amplifier
+    if not hasattr(amplifier, action):
+        raise RequestError(400, f"unknown fault action {action}")
+    getattr(amplifier, action)(zone)
+    record_event(server.runtime, "broadcast_fault", f"{zone}:{action}")
+    return json_response({"zone": zone, "action": action})
 
 
 def suppression_clear(server: "Server", request: Request) -> Response:

@@ -55,7 +55,19 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(
             {check["name"] for check in checks["checks"]},
-            {"store", "access", "drain", "ventilation", "fire", "patrol", "quota", "cables", "environment", "audit"},
+            {
+                "store",
+                "access",
+                "drain",
+                "ventilation",
+                "fire",
+                "patrol",
+                "quota",
+                "cables",
+                "environment",
+                "broadcast",
+                "audit",
+            },
         )
 
         status, snapshot = self.call("GET", "/api/snapshot")
@@ -77,6 +89,7 @@ class ConsoleCase(unittest.TestCase):
                 "quota",
                 "cables",
                 "suppression",
+                "broadcast",
                 "audit",
             },
         )
@@ -766,6 +779,96 @@ class CliCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             application = create_application(Store.open(f"{tmp}/data"), "web")
             self.assertIsInstance(application, Server)
+
+
+class BroadcastConsoleCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = Store.open(f"{self._tmp.name}/data")
+        self.server = Server(self.store, web_dir="web")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def call(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
+        response = self.server.dispatch(method, path, payload, query)
+        body = response.body.decode("utf-8")
+        parsed = json.loads(body) if response.content_type.startswith("application/json") else body
+        return response.status, parsed
+
+    def test_snapshot_decision_and_seeded_zones(self) -> None:
+        status, payload = self.call("GET", "/api/broadcast")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["decision"], {"preempt_mode": "immediate", "fallback_scope": "zone"})
+        self.assertEqual(payload["counts"]["zones"], 3)
+
+    def test_trigger_preempts_and_queue_is_visible_everywhere(self) -> None:
+        status, notice = self.call(
+            "POST",
+            "/api/broadcast/trigger",
+            {"key": "notice-1", "priority": "notice", "duration": 5, "zones": ["zone-1"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(notice["started"], ["zone-1"])
+
+        status, fire = self.call(
+            "POST",
+            "/api/broadcast/trigger",
+            {"key": "fire-1", "priority": "fire", "duration": 5, "zones": ["zone-1"]},
+        )
+        self.assertEqual(fire["status"], "playing")
+
+        status, zone = self.call("GET", "/api/broadcast/zones", query={"zone": ["zone-1"]})
+        self.assertEqual(zone["current"]["key"], "fire-1")
+        self.assertEqual([item["key"] for item in zone["queue"]], ["notice-1"])
+
+        # The same projection is what /api/snapshot exposes.
+        status, snapshot = self.call("GET", "/api/snapshot")
+        broadcast = snapshot["broadcast"]
+        zone_one = next(item for item in broadcast["zones"] if item["zone_id"] == "zone-1")
+        self.assertEqual(zone_one["current"]["key"], "fire-1")
+
+        # Audit trail shares the playback event stream.
+        status, audit = self.call(
+            "GET", "/api/broadcast/audit", query={"zone": ["zone-1"], "event": ["playback_preempted"]}
+        )
+        self.assertEqual(audit["events"][0]["data"]["mode"], "immediate")
+
+    def test_idempotent_trigger_returns_same_command(self) -> None:
+        payload = {"key": "fire-x", "priority": "fire", "duration": 5, "zones": ["zone-1"]}
+        _, first = self.call("POST", "/api/broadcast/trigger", payload)
+        _, second = self.call("POST", "/api/broadcast/trigger", payload)
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(second["command_id"], first["command_id"])
+
+    def test_fault_injection_falls_back_to_indicator(self) -> None:
+        status, _ = self.call(
+            "POST", "/api/broadcast/fault", {"zone": "zone-2", "action": "fail_next_play"}
+        )
+        self.assertEqual(status, 200)
+        status, result = self.call(
+            "POST",
+            "/api/broadcast/trigger",
+            {"key": "fire-fail", "priority": "fire", "duration": 5, "zones": ["zone-1", "zone-2"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["indicator"], ["zone-2"])
+        self.assertIn("zone-1", result["rolled_back"])
+        _, zone_two = self.call("GET", "/api/broadcast/zones", query={"zone": ["zone-2"]})
+        self.assertEqual(zone_two["state"], "indicator")
+
+    def test_missing_zones_is_a_bad_request(self) -> None:
+        status, error = self.call(
+            "POST", "/api/broadcast/trigger", {"key": "x", "zones": []}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("zones", error["error"])
+
+    def test_unknown_zone_is_not_found(self) -> None:
+        status, error = self.call(
+            "POST", "/api/broadcast/trigger", {"key": "x", "zones": ["ghost"]}
+        )
+        self.assertEqual(status, 404)
 
 
 if __name__ == "__main__":
